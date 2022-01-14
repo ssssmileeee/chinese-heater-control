@@ -3,9 +3,9 @@
 #include <SoftwareSerialWithHalfDuplex.h>
 #include "MODBUS-CRC16.h"
 
-LiquidCrystal_I2C lcd(0x27, 16, 2);
-SoftwareSerialWithHalfDuplex sOne(2, 2); // NOTE TX & RX are set to same pin for half duplex operation
-int onoff_pin = 9;
+LiquidCrystal_I2C lcd(0x27, 16, 2); // I2C 1602 LCD
+SoftwareSerialWithHalfDuplex sOne(2, 2); // NOTE TX & RX are set to same pin for half-duplex operation
+int onoff_button_pin = 9;
 
 String heater_display_states[] = {"off", "starting", "pre-heat", "retrying", "ignition", "running", "stop", "stopping", "cooldown"};
 enum heater_state_enum {OFF, STARTING, PREHEAT, RETRYING_START, HEATING_UP, RUNNING, STOP_COMMAND_RECEIVED, STOPPING, COOLDOWN};
@@ -42,7 +42,7 @@ struct Command {
   uint8_t Unknown1_MSB;        // [18] always 0x01
   uint8_t Unknown1_LSB;        // [19] always 0x2c  "300 secs = max run without burn detected"?
   uint8_t Altitude_MSB;        // [20] 0x01
-  uint8_t Altitude_LSB;        // [21] 0x59 - 345m for Belarus
+  uint8_t Altitude_LSB;        // [21] 0x59 - 345m for Belarus (just set value for your place)
   uint8_t CRC_MSB;             // [22] CRC checksum
   uint8_t CRC_LSB;             // [23] CRC checksum
 };
@@ -50,7 +50,7 @@ struct Command {
 struct HeaterResponse {
   uint8_t Byte0;                // [0] 0x76 - allows heater to save tuning params to EEPROM / 0x78 - prevents heater saving tuning params to EEPROM.  LCD controllers use 0x76 as first byte, rotary knobs use 0x78
   uint8_t Len;                  // [1] always 0x16 == 22 bytes
-  uint8_t RunState;             // [2] operating state
+  uint8_t RunState;             // [2] operating state, see heater_state_enum
   uint8_t ErrState;             // [3] 0: OFF, 1: ON, 2+ (E-0n + 1)
   uint8_t SupplyV_MSB;          // [4] 16 bit - big endian MSB
   uint8_t SupplyV_LSB;          // [5] 16 bit - big endian MSB : 0.1V / digit
@@ -70,15 +70,15 @@ struct HeaterResponse {
   uint8_t FixedPumpFreq;        // [19] fixed mode frequency set point: 0.1Hz / digit
   uint8_t Unknown2;             // [20] always 0x64  "100 ?"
   uint8_t Unknown3;             // [21] always 0x00
-  uint8_t CRC_MSB;              // [22] checksum
-  uint8_t CRC_LSB;              // [23] checksum
+  uint8_t CRC_MSB;              // [22] CRC checksum
+  uint8_t CRC_LSB;              // [23] CRC checksum
 };
 
 Command command;
 HeaterResponse heater;
 
 void setup() {
-  pinMode(onoff_pin, INPUT_PULLUP);
+  pinMode(onoff_button_pin, INPUT_PULLUP);
   lcd.init();
 
   byte on_char[] = {
@@ -102,12 +102,12 @@ void setup() {
     0x00
   };
 
-  lcd.createChar(1, on_char);     //  Загружаем 1 символ "вкл" в ОЗУ дисплея
-  lcd.createChar(2, off_char);  //  Загружаем 1 символ "выкл" в ОЗУ дисплея
+  lcd.createChar(1, on_char);     // pass "on" character to lcd as "\1", see https://maxpromer.github.io/LCD-Character-Creator/
+  lcd.createChar(2, off_char);    // pass "off" character to lcd as "\2", see https://maxpromer.github.io/LCD-Character-Creator/
   lcd.clear();
   lcd.print("Init...");
 
-  //init default values for command
+  // init default values for command
   command = {0x78, 0x16, 0x00, 0x00, 34, 12, 55, 0x05, 0xC8, 0x13, 0x88, 120, 0x01, 0xCD, 0x08, 0x23, 0x05, 0x00, 0x01, 0x2C, 0x0D, 0xAC, 0x00, 0x00};
   update_command_CRC();
 
@@ -141,7 +141,7 @@ void loop() {
 
 void prepare_command() {
 
-  if (digitalRead(onoff_pin) == LOW && (millis() - last_button_toggled_time) > button_lock_ms) {
+  if (digitalRead(onoff_button_pin) == LOW && (millis() - last_button_toggled_time) > button_lock_ms) {
     is_enabled = !is_enabled;
     last_button_toggled_time = millis();
   }
@@ -155,7 +155,7 @@ void prepare_command() {
     command.Command = TURN_OFF;
   }
   else {
-    command.Command = NONE;
+    command.Command = NONE;  // empty command just for receiving actual data from controller
   }
 
   if (previous_command != command.Command) {
@@ -236,7 +236,7 @@ void read_response() {
   static byte response_buffer[24];
   static int count = 0;
 
-  // read from serial on D2
+  // read from serial info buffer
   while (sOne.available() > 0) {
     int inByte = sOne.read(); // read hex byte
     if (count < 24) // any bytes over 24 will simply be taken to clear the response buffer
